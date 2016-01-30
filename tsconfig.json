@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "es5",
+    "module": "commonjs",
+    "sourceMap": true,
+    "declaration": true,
+    "outDir": "./dist"
+  },
+  "files": [
+    "./typings/bluebird/bluebird.d.ts",
+    "./typings/lodash/lodash.d.ts",
+    "./typings/node/node.d.ts",
+
+    "./src/index.ts"
+  ]
+}
