@@ -1,0 +1,24 @@
+{
+  "globalDependencies": {
+    "bl": "registry:dt/bl#0.8.0+20160316155526",
+    "bluebird": "registry:dt/bluebird#3.0.0+20160811111256",
+    "bunyan": "registry:dt/bunyan#0.0.0+20160412155112",
+    "inversify": "registry:dt/inversify#2.0.0-beta.9+20160811111312",
+    "jasmine": "registry:dt/jasmine#2.2.0+20160621224255",
+    "node": "registry:env/node#6.0.0+20160813135048",
+    "qs": "registry:dt/qs#6.2.0+20160707010053",
+    "restify": "registry:dt/restify#2.0.0+20160726153409",
+    "socket.io": "registry:dt/socket.io#1.4.4+20160317120654"
+  },
+  "dependencies": {
+    "amqplib": "registry:npm/amqplib#0.4.1+20160726143451",
+    "debug": "registry:npm/debug#2.0.0+20160723033700",
+    "jsonwebtoken": "registry:npm/jsonwebtoken#7.1.8+20160811031426",
+    "lodash": "registry:npm/lodash#4.0.0+20160723033700",
+    "mongoose": "registry:npm/mongoose#4.3.5+20160628072220",
+    "msgpack5": "file:/Users/kson/Documents/github/npm-msgpack5/typings.json",
+    "node-uuid": "registry:npm/node-uuid#1.4.7+20160723033700",
+    "redis": "registry:npm/redis#0.12.1+20160729031738",
+    "winston": "file:/Users/kson/Documents/github/npm-winston/typings.json"
+  }
+}

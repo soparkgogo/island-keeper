@@ -1,26 +1,11 @@
 import 'source-map-support/register'
 import * as Promise from 'bluebird';
 import * as _ from 'lodash';
-import * as events from 'events';
 import * as url from 'url';
-var Etcd = require('node-etcd');
+var Consul = require('consul');
 
-export interface INode {
-  key: string;
-  value?: string; // 디렉토리를 생성하거나 키를 삭제하는 경우 value가 없을 수도 있다
-  createdIndex?: number;
-  modifiedIndex?: number;
-  expiration?: Date;
-  ttl?: number;
-  dir?: boolean; // 하위 node가 있는경우 true
-  nodes?: INode[];
-}
-
-export interface IResponse {
-  action: string; // 'get', 'set', 'delete', 'update', 'compareAndSwap', 'expire'
-  node: INode;
-  prevNode?: INode;
-}
+const ENDPOINT_PREFIX = 'endpoints/';
+const RPC_PREFIX = 'rpcs/';
 
 export interface Islands {
   patterns?: { [serviceName: string]: string };
@@ -31,10 +16,21 @@ export interface Islands {
   }
 }
 
+// http://bluebirdjs.com/docs/api/catchthrow.html
+// 빨리 bluebird 3.0으로 갔으면... @kson //2016-08-08
+function catchThrow(fn) {
+  return (e) => {
+    fn(e);
+    throw e;
+  };
+}
+
 export default class IslandKeeper {
   private static instance: IslandKeeper;
+  private static serviceName: string;
 
-  private etcd: any;
+  private ns: string;
+  private consul: any;
   private _initialized: boolean = false;
   private intervalIds: { [name: string]: any } = {};
 
@@ -42,7 +38,7 @@ export default class IslandKeeper {
 
   constructor() {
     if (IslandKeeper.instance) {
-      throw new Error("Error: Instantiation failed: Use getInst() instead of new.");
+      throw new Error('Error: Instantiation failed: Use getInst() instead of new.');
     }
     IslandKeeper.instance = this;
   }
@@ -54,10 +50,24 @@ export default class IslandKeeper {
     return IslandKeeper.instance;
   }
 
-  public init(host: string, port: number = 4001) {
-    this.etcd = new Etcd(host, port);
+  private generateLogAhead(msg, stack?: string[]) {
+    return (o) => {
+      return IslandKeeper.logAhead(msg, o, stack);
+    };
+  }
+
+  public init(host: string, ns: string = 'game', token?: string) {
+    const defaults: {token?: string} = {
+      token: token || process.env.ISLAND_CONSUL_TOKEN
+    };
+    this.consul = Consul({host, promisify: true, defaults});
     this._initialized = true;
+    this.ns = ns;
     return this;
+  }
+
+  public setServiceName(name: string) {
+    IslandKeeper.serviceName = name;
   }
 
   /**
@@ -72,15 +82,33 @@ export default class IslandKeeper {
    * @param {any} value
    * @param {Object} options
    */
-  public setKey(key: string, value: any, options?: { ttl?: number, prevValue?: any, prevExist?: boolean, prevIndex?: number, maxRetries?: number }) {
-    if (!this._initialized) return Promise.reject<IResponse>(new Error('Not initialized exception'));
+  async setKey(key: string, value: any, options?: { ttl?: number, prevValue?: any, prevExist?: boolean, prevIndex?: number, maxRetries?: number }) {
+    if (!this._initialized) return Promise.reject(new Error('Not initialized exception'));
     if (typeof value !== 'string') value = JSON.stringify(value);
-    var deferred = Promise.defer<IResponse>();
-    this.etcd.set(key, value, options || {}, (err, res: IResponse) => {
-      if (err) return deferred.reject(err);
-      return deferred.resolve(res);
-    });
-    return deferred.promise;
+
+    if (key && key.length > 1 && key[0] == '/') {
+      key = key.slice(1);
+    }
+
+    let input = { key, value } as any;
+    let sid;
+
+    // Need to create a new session when it needs ttl function.
+    if (options && options.ttl) {
+      let check = await this.consul.kv.get({ key });
+
+      if (!check || !check.Session) {    // To Create a new session
+        sid = (await this.consul.session.create({ name: key, ttl: options.ttl.toString() + 's', behavior: "delete" })).ID;
+      }
+      else {    // To Update an old session
+        sid = check.Session;
+        this.consul.session.renew(sid);
+      }
+
+      input.acquire = sid;    // Leave sid property in the input parameter for ttl function.
+    }
+
+    return Promise.resolve(this.consul.kv.set(input));
   }
 
   /**
@@ -88,17 +116,19 @@ export default class IslandKeeper {
    *
    * Available options include:
    *  recursive (bool, list all values in directory recursively)
-   *  wait (bool, wait for changes to key)
-   *  waitIndex (wait for changes after given index)
+   *  사용되지 않음 wait (bool, wait for changes to key)
+   *  사용되지 않음 waitIndex (wait for changes after given index)
    */
   public getKey(key: string, options?: { recursive?: boolean, wait?: boolean, waitIndex?: number }) {
-    if (!this._initialized) return Promise.reject<IResponse>(new Error('Not initialized exception'));
-    var deferred = Promise.defer<IResponse>();
-    this.etcd.get(key, options || {}, (err, res: IResponse) => {
-      if (err) return deferred.reject(err);
-      return deferred.resolve(res);
-    });
-    return deferred.promise;
+    if (!this._initialized) return Promise.reject(new Error('Not initialized exception'));
+    if (key && key.length > 1 && key[0] === '/') {
+      key = key.slice(1);
+    }
+    const recurse = options && options.recursive || false;
+
+    const logAhead = this.generateLogAhead('IslandKeeper.getKey');
+    return Promise.resolve(this.consul.kv.get({key, recurse}))
+      .tap(logAhead).catch(catchThrow(logAhead))
   }
 
   /**
@@ -107,138 +137,41 @@ export default class IslandKeeper {
    * Available options include:
    *  recursive (bool, delete recursively)
    */
-  public delKey(key: string, options?: { recursive?: boolean }) {
-    if (!this._initialized) return Promise.reject<IResponse>(new Error('Not initialized exception'));
-    var deferred = Promise.defer<IResponse>();
-    this.etcd.del(key, options || {}, (err, res: IResponse) => {
-      if (err) return deferred.reject(err);
-      return deferred.resolve(res);
-    });
-    return deferred.promise;
-  }
+  async delKey(key: string, options?: { recursive?: boolean }) {
+    if (!this._initialized) return Promise.reject(new Error('Not initialized exception'));
+    const recurse = options && options.recursive || false;
 
-  /**
-   * 디렉토리를 생성한다. setKey와 유사하지만 value 를 지정하지 않는다
-   */
-  public mkdir(dir: string, options?: any) {
-    if (!this._initialized) return Promise.reject<IResponse>(new Error('Not initialized exception'));
-    var deferred = Promise.defer<IResponse>();
-    this.etcd.mkdir(dir, options || {}, (err, res: IResponse) => {
-      if (err) return deferred.reject(err);
-      return deferred.resolve(res);
-    });
-    return deferred.promise;
-  }
-
-  /**
-   * 디렉토리를 삭제한다. delKey와 유사함
-   */
-  public rmdir(dir: string, options?: { recursive?: boolean }) {
-    if (!this._initialized) return Promise.reject<IResponse>(new Error('Not initialized exception'));
-    var deferred = Promise.defer<IResponse>();
-    this.etcd.rmdir(dir, options || {}, (err, res: IResponse) => {
-      if (err) return deferred.reject(err);
-      return deferred.resolve(res);
-    });
-    return deferred.promise;
-  }
-
-  /**
-   * watcher 를 리턴한다. recursive 옵션이 켜 있는 경우 하위 키에 대한 변경된 부분만 전달된다
-   *
-   * Signals:
-   *  change - emitted on value change
-   *  reconnect - emitted on reconnect
-   *  error - emitted on invalid content
-   *  <etcd action> - the etcd action that triggered the watcher (ex: set, delete).
-   *  stop - watcher was canceled.
-   *  resync - watcher lost sync (server cleared and outdated the index).
-   */
-  public getWatcher(key, options?: { recursive?: boolean }): events.EventEmitter {
-    if (!this._initialized) throw new Error('Not initialized exception');
-    return this.etcd.watcher(key, null, options);
-  }
-
-  /**
-   * node 를 파싱한다
-   */
-  public static parseNode(node: INode) {
-    if (!node) return;
-    var obj = {};
-    var key = _.last<string>(node.key.split('/'));
-    if (node.dir && Array.isArray(node.nodes)) {
-      node.nodes.forEach(node => {
-        let parsed = this.parseNode(node);
-        if (key) {
-          if (!obj[key]) obj[key] = {};
-          _.merge(obj[key], parsed);
-        } else _.merge(obj, parsed);
-      });
-    } else {
-      if (/^\d+$/.test(node.value)) obj[key] = parseInt(node.value, 10);
-      else {
-        try { obj[key] = JSON.parse(node.value); } catch (e) { obj[key] = node.value; }
-      }
+    // destroy the key with TTL function
+    const result = await this.consul.kv.get({key, recurse});
+    if (result && result.Session) {
+      return await this.consul.session.destroy(result.Session);
     }
-    return obj;
+
+    const tmpError = new Error() as any;
+    const logAhead = this.generateLogAhead('IslandKeeper.delKey', tmpError.stack);
+    return Promise.resolve(this.consul.kv.del({key, recurse}))
+      .catch(catchThrow(logAhead));
   }
 
+
+  // 지금은 push-island 소재를 파악하는데에만 사용됨
   public getIsland(name: string): Promise<{[host: string]: string}> {
-    return this.getKey(['/islands/hosts', name].join('/'), { recursive: true }).then(res => {
-      var node = IslandKeeper.parseNode(res.node);
-      return (node[name]) ? node[name] : node;
-    }).catch(err => {
-      // not found
-      if (err.errorCode === 100) return <{[host: string]: string}>{};
-      throw err;
-    });
+    // GET /v2/service/info 에서 사용됨
+    return this.getKey(`islands/hosts/${name}`, { recursive: true })
+      .tap(this.generateLogAhead('IslandKeeper.getIsland'))
+      .catch(err => {
+        // not found
+        if (err.errorCode === 100) return <{[host: string]: string}>{};
+        throw err;
+      });
   }
 
-  public getIslands(): Promise<Islands> {
-    return this.getKey('/islands', { recursive: true }).then(res => {
-      var node = IslandKeeper.parseNode(res.node);
-      return <Islands>(node['islands'] ? node['islands'] : {});
-    }).catch(err => {
-      // not found
-      if (err.errorCode === 100) return <Islands>{};
-      throw err;
-    });
-  }
-
-  public watchIslands(handler: (islands: Islands) => void) {
-    if (!this._initialized) throw new Error('Not initialized exception');
-
-    let islands: Islands = {};
-    var watcher = this.getWatcher('/islands', { recursive: true });
-    var _handler = (res: IResponse) => {
-      let key = res.node.key.replace(/\/islands\//, '').replace(/\//g, '.');
-      if (res.action === 'expire' || res.action === 'delete') {
-        islands = _.set(islands, key, undefined);
-      } else {
-        let value = IslandKeeper.parseNode(res.node);
-        let splits = key.split('.');
-        islands = _.set(islands, key, value[splits[splits.length - 1]]);
-      }
-      return handler(islands);
-    }
-    watcher.on('change', _handler);
-    watcher.on('set', _handler);
-    watcher.on('delete', _handler);
-    watcher.on('update', _handler);
-    watcher.on('create', _handler);
-    watcher.on('expire', _handler);
-
-    this.getIslands().then(result => {
-      islands = result;
-      return handler(result);
-    });
-    return watcher;
-  }
-
-  public registerIsland(name: string, value: { hostname: string, port: any, pattern?: string, protocol?: string }, options: { ttl?: number, interval?: number } = {}) {
-    let register = () => {
+  // 지금은 push-island를 등록하는데에만 사용됨
+  public registerIsland(name: string, value: { hostname: string, port: any, pattern?: string, protocol?: string },
+                        options: { ttl?: number, interval?: number } = {}) {
+    const register = () => {
       return Promise.try(() => {
-        let key = 's' + value.hostname.replace(/\./g, '') + value.port;
+        const key = 's' + value.hostname.replace(/\./g, '') + value.port;
         return Promise.all([
           this.setKey(['/islands', 'hosts', name, key].join('/'), url.format({
             protocol: value.protocol || 'http',
@@ -273,40 +206,139 @@ export default class IslandKeeper {
     });
   }
 
-  public registerEndpoint(name: string, value: any, options?: { ttl?: number }) {
-    // name: GET@|players|:pid
-    var key = ['/endpoints', name].join('/');
-    return this.setKey(key, value);
+  public getEndpoints<T>() {
+    if (!this._initialized) return Promise.reject(new Error('Not initialized exception'));
+
+    const key = `${this.ns}.${ENDPOINT_PREFIX}`;
+    const logAhead = this.generateLogAhead('IslandKeeper.getEndpoints');
+    return this.getKey(key, { recursive: true })
+      .tap(logAhead).catch(catchThrow(logAhead))
+      .then((items) => {
+        if (!items) throw new Error('get Endpoints is empty');
+
+        return _.mapValues(
+          _.keyBy(items, (item: any) => item.Key.slice(key.length)),
+          (item: any) => JSON.parse(item.Value));
+      });
   }
 
-  public getEndpoints<T>() {
-    return this.getKey('/endpoints', { recursive: true }).then(res => {
-      var node = IslandKeeper.parseNode(res.node);
-      return node['endpoints'] ? node['endpoints'] : {};
-    }).catch(err => {
-      // NOTE: 키가 존재하지 않는다면 언젠가 set 되므로 watchEndpoints 에서 키를 등록하게 될 것이다
-      if (err.errorCode === 100) return <T>{};
-      throw err;
+  public registerEndpoint(name: string, value: any) {
+    value.island = IslandKeeper.serviceName;
+    return this.setKey(`/${this.ns}.${ENDPOINT_PREFIX}${name}`, value);
+  }
+
+
+  public getRpcs(): Promise<{[key: string]: any}> {
+    if (!this._initialized) return Promise.reject(new Error('Not initialized exception'));
+    const key = `${this.ns}.${RPC_PREFIX}`;
+    const logAhead = this.generateLogAhead('IslandKeeper.getRpcs');
+    return this.getKey(key, { recursive: true })
+      .tap(logAhead).catch(catchThrow(logAhead))
+      .then((items) => {
+        if (!items) throw new Error('get Endpoints is empty');
+
+        return _.mapValues(
+          _.keyBy(items, (item: any) => item.Key.slice(key.length)),
+          (item: any) => JSON.parse(item.Value));
+      });
+  }
+
+  public registerRpc(name: string, value: any) {
+    const currentIsland: string = IslandKeeper.serviceName;
+    const rpcValue = value || {};
+
+    if (!currentIsland || currentIsland === undefined || currentIsland === 'undefined')
+      throw new Error("IslandKeeper will NOT register RPCs that doesn't provide its origin island. You should use IslandKeeper.setServiceName(string) at the very beginning");
+
+    return this.getKey(`${this.ns}.${RPC_PREFIX}${name}`).then(res => {
+      // Consul은 key not found 일 때, result가 undefined 임
+      if (res) {
+        const prevIsland = JSON.parse(res.Value).island;
+        if (prevIsland != currentIsland) {
+          throw new Error(`# RPC(${this.ns}.${name}) is already registered by ${prevIsland}-island.`);
+        }
+      }
+      rpcValue.island = currentIsland;
+      rpcValue.registered_at = new Date().getTime();
+      return this.setKey(`${this.ns}.${RPC_PREFIX}${name}`, rpcValue);
     });
   }
 
-  public deleteEndpoints() {
-    return this.delKey('/endpoints', { recursive: true });
-  }
-
-  public watchEndpoints<T>(handler: (action: string, name: string, value: T) => void) {
+  public watchEndpoints<T>(handler: (name: string, value: T) => void) {
     if (!this._initialized) throw new Error('Not initialized exception');
 
-    let watcher = this.getWatcher('/endpoints', { recursive: true });
-    let _handler = (res: IResponse) => {
-      var splits = res.node.key.split('/');
-      return handler(res.action, splits[2], <T>IslandKeeper.parseNode(res.node)[splits[2]]);
-    }
+    const endpointPrefix = this.ns + '.' + ENDPOINT_PREFIX;
+    const watcher = this.consul.watch({
+      method: this.consul.kv.get,
+      options: {
+        key: endpointPrefix,
+        recurse: true
+      }
+    });
 
-    watcher.on('create', _handler);
-    watcher.on('set', _handler);
-    watcher.on('update', _handler);
-    watcher.on('change', _handler);
+    const changeHandler = (data, response) => {
+      const consulIndex: number = +response.headers['x-consul-index'];
+      const changes = _.remove(data, (item) => {
+        // FIXME: 가끔 놓쳐지는 endpoints들이 발견되었다. 그래서 지금은 안전하게 몽땅 다시 등록함. 딱히 성능 문제 없음.
+        return true; // consulIndex == item['CreateIndex'] || consulIndex == item['ModifyIndex'];
+      });
+
+      IslandKeeper.logAhead('IslandKeeper.watchEndpoints', {
+        'Headers': response.headers,
+        'Changes': data
+      });
+      for (var i=0; i<changes.length; i++) {
+        const item = changes[i];
+        const key = item['Key'].substring(endpointPrefix.length);
+        const value = JSON.parse(item['Value']);
+        handler(key, <T>value);
+      }
+    };
+    watcher.on('change', changeHandler);
     return watcher;
+  }
+
+  /*
+   * 정신없을 때
+   *
+   * @params tag 태그
+   * @params message 로깅하고 싶은 any object
+   * @params stacks optional stacktrace. e.g. new Error().stack
+   */
+  public static logAhead(tag: string, message: any, stacks?: string[]): void {
+    const hostLogAhead = process.env['LOG_AHEAD'];
+    if (!hostLogAhead) return;
+
+    const http = require('http');
+    const util = require('util');
+
+    const payload = {
+      timestamp: new Date().getTime(),
+      islandName: IslandKeeper.serviceName,
+      stacks: stacks,
+      tag: tag,
+      message: message
+    };
+
+    const req = http.request({
+      method: 'POST',
+      hostname: hostLogAhead,
+      port: 9000,
+      path: '/log'
+    }, (res) => {
+    });
+    req.on('error', (err) => {
+      // Silently ignored
+      // console.log('Skip logging: ' + err);
+    });
+
+    var stringPayload: string;
+    try {
+      stringPayload = JSON.stringify(payload, null, 2);
+    } catch (e) { // TypeError: Converting circular structure to JSON
+      stringPayload = util.inspect(payload);
+    }
+    req.write(stringPayload);
+    req.end();
   }
 }

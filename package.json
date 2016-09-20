@@ -1,31 +1,26 @@
 {
   "name": "island-keeper",
-  "version": "1.0.0",
-  "description": "",
+  "version": "1.1.0",
+  "description": "island-keeper",
   "main": "dist/index.js",
   "typings": "dist/index.d.ts",
+  "author": "wokim <wonshikkim.kr@gmail.com>",
+  "contributors": [
+    "heycalmdown <hey.calmdown@gmail.com>"
+  ],
   "scripts": {
+    "postinstall": "gulp build",
     "build": "gulp build",
+    "watch": "gulp build && gulp watch",
     "clean": "gulp clean",
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/spearhead-ea/island-keeper.git"
-  },
-  "author": "wokim@ea.com",
-  "license": "BSD",
-  "bugs": {
-    "url": "https://github.com/spearhead-ea/island-keeper/issues"
-  },
-  "homepage": "https://github.com/spearhead-ea/island-keeper",
-  "devDependencies": {
-    "gulp": "^3.9.0"
+    "test": "gulp build && jasmine"
   },
   "dependencies": {
-    "bluebird": "^3.1.5",
-    "lodash": "^4.1.0",
-    "node-etcd": "^4.2.1",
-    "source-map-support": "^0.4.0"
+    "bluebird": "^2.11.0",
+    "lodash": "^4.16.0",
+    "source-map-support": "^0.4.2"
+  },
+  "devDependencies": {
+    "gulp": "^3.9.1"
   }
 }
