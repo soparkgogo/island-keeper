@@ -1,6 +1,6 @@
 {
   "name": "island-keeper",
-  "version": "1.1.0",
+  "version": "1.1.2",
   "description": "island-keeper",
   "main": "dist/index.js",
   "typings": "dist/index.d.ts",
@@ -9,7 +9,7 @@
     "heycalmdown <hey.calmdown@gmail.com>"
   ],
   "scripts": {
-    "postinstall": "gulp build",
+    "prepublish": "gulp build",
     "build": "gulp build",
     "watch": "gulp build && gulp watch",
     "clean": "gulp clean",
