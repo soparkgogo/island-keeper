@@ -1,5 +1,4 @@
-dist
-coverage
+package
 island-keeper-*.tgz
 
 # Logs
