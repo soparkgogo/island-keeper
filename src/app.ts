@@ -1,8 +1,8 @@
 import 'source-map-support/register'
-import * as Promise from 'bluebird';
+import * as Bluebird from 'bluebird';
 import * as _ from 'lodash';
 import * as url from 'url';
-var Consul = require('consul');
+import * as Consul from 'consul';
 
 const ENDPOINT_PREFIX = 'endpoints/';
 const RPC_PREFIX = 'rpcs/';
@@ -18,6 +18,7 @@ export interface Islands {
 
 // http://bluebirdjs.com/docs/api/catchthrow.html
 // 빨리 bluebird 3.0으로 갔으면... @kson //2016-08-08
+// 오히려 bluebird를 제거해버렸다. 크흑 @kson //2016-11-14
 function catchThrow(fn) {
   return (e) => {
     fn(e);
@@ -30,7 +31,7 @@ export default class IslandKeeper {
   private static serviceName: string;
 
   private ns: string;
-  private consul: any;
+  private consul: Consul.Consul;
   private _initialized: boolean = false;
   private intervalIds: { [name: string]: any } = {};
 
@@ -95,10 +96,10 @@ export default class IslandKeeper {
 
     // Need to create a new session when it needs ttl function.
     if (options && options.ttl) {
-      let check = await this.consul.kv.get({ key });
+      let check: any = await this.consul.kv.get({ key });
 
       if (!check || !check.Session) {    // To Create a new session
-        sid = (await this.consul.session.create({ name: key, ttl: options.ttl.toString() + 's', behavior: "delete" })).ID;
+        sid = (await this.consul.session.create({ name: key, ttl: options.ttl.toString() + 's', behavior: "delete" }) as any).ID;
       }
       else {    // To Update an old session
         sid = check.Session;
@@ -119,7 +120,7 @@ export default class IslandKeeper {
    *  사용되지 않음 wait (bool, wait for changes to key)
    *  사용되지 않음 waitIndex (wait for changes after given index)
    */
-  public getKey(key: string, options?: { recursive?: boolean, wait?: boolean, waitIndex?: number }) {
+  public getKey(key: string, options?: { recursive?: boolean, wait?: boolean, waitIndex?: number }): Promise<any> {
     if (!this._initialized) return Promise.reject(new Error('Not initialized exception'));
     if (key && key.length > 1 && key[0] === '/') {
       key = key.slice(1);
@@ -127,8 +128,11 @@ export default class IslandKeeper {
     const recurse = options && options.recursive || false;
 
     const logAhead = this.generateLogAhead('IslandKeeper.getKey');
-    return Promise.resolve(this.consul.kv.get({key, recurse}))
-      .tap(logAhead).catch(catchThrow(logAhead))
+    return Promise.resolve(
+      Bluebird.resolve(this.consul.kv.get({key, recurse}))
+        .tap(logAhead)
+        .catch(catchThrow(logAhead))
+    );
   }
 
   /**
@@ -142,7 +146,7 @@ export default class IslandKeeper {
     const recurse = options && options.recursive || false;
 
     // destroy the key with TTL function
-    const result = await this.consul.kv.get({key, recurse});
+    const result: any = await this.consul.kv.get({key, recurse});
     if (result && result.Session) {
       return await this.consul.session.destroy(result.Session);
     }
@@ -157,20 +161,22 @@ export default class IslandKeeper {
   // 지금은 push-island 소재를 파악하는데에만 사용됨
   public getIsland(name: string): Promise<{[host: string]: string}> {
     // GET /v2/service/info 에서 사용됨
-    return this.getKey(`islands/hosts/${name}`, { recursive: true })
-      .tap(this.generateLogAhead('IslandKeeper.getIsland'))
-      .catch(err => {
-        // not found
-        if (err.errorCode === 100) return <{[host: string]: string}>{};
-        throw err;
-      });
+    return Promise.resolve(
+      Bluebird.resolve(this.getKey(`islands/hosts/${name}`, { recursive: true }))
+        .tap(this.generateLogAhead('IslandKeeper.getIsland'))
+        .catch(err => {
+          // not found
+          if (err.errorCode === 100) return {};
+          throw err;
+        })
+    );
   }
 
   // 지금은 push-island를 등록하는데에만 사용됨
   public registerIsland(name: string, value: { hostname: string, port: any, pattern?: string, protocol?: string },
                         options: { ttl?: number, interval?: number } = {}) {
     const register = () => {
-      return Promise.try(() => {
+      return Bluebird.try(() => {
         const key = 's' + value.hostname.replace(/\./g, '') + value.port;
         return Promise.all([
           this.setKey(['/islands', 'hosts', name, key].join('/'), url.format({
@@ -183,16 +189,17 @@ export default class IslandKeeper {
       });
     }
 
-    return Promise.try(() => {
+    return Promise.resolve(
+      Bluebird.try(() => {
       if (this.intervalIds[name]) throw new Error('Duplicated name');
 
       this.intervalIds[name] = setInterval(() => register(), options.interval || 5000);
       return register();
-    });
+    }));
   }
 
   public unregisterIsland(name: string) {
-    return Promise.try(() => {
+    return Promise.resolve(Bluebird.try(() => {
       if (!this.intervalIds[name]) throw new Error('Missing name');
 
       var id = this.intervalIds[name];
@@ -203,7 +210,7 @@ export default class IslandKeeper {
         this.delKey('/islands/hosts/' + name, { recursive: true }),
         this.delKey('/islands/patterns/' + name, { recursive: true })
       ]);
-    });
+    }));
   }
 
   public getEndpoints<T>() {
@@ -211,7 +218,7 @@ export default class IslandKeeper {
 
     const key = `${this.ns}.${ENDPOINT_PREFIX}`;
     const logAhead = this.generateLogAhead('IslandKeeper.getEndpoints');
-    return this.getKey(key, { recursive: true })
+    return Promise.resolve(Bluebird.resolve(this.getKey(key, { recursive: true }))
       .tap(logAhead).catch(catchThrow(logAhead))
       .then((items) => {
         if (!items) throw new Error('get Endpoints is empty');
@@ -219,7 +226,7 @@ export default class IslandKeeper {
         return _.mapValues(
           _.keyBy(items, (item: any) => item.Key.slice(key.length)),
           (item: any) => JSON.parse(item.Value));
-      });
+      }));
   }
 
   public registerEndpoint(name: string, value: any) {
@@ -232,7 +239,7 @@ export default class IslandKeeper {
     if (!this._initialized) return Promise.reject(new Error('Not initialized exception'));
     const key = `${this.ns}.${RPC_PREFIX}`;
     const logAhead = this.generateLogAhead('IslandKeeper.getRpcs');
-    return this.getKey(key, { recursive: true })
+    return Promise.resolve(Bluebird.resolve(this.getKey(key, { recursive: true }))
       .tap(logAhead).catch(catchThrow(logAhead))
       .then((items) => {
         if (!items) throw new Error('get Endpoints is empty');
@@ -240,7 +247,7 @@ export default class IslandKeeper {
         return _.mapValues(
           _.keyBy(items, (item: any) => item.Key.slice(key.length)),
           (item: any) => JSON.parse(item.Value));
-      });
+      }));
   }
 
   public registerRpc(name: string, value: any) {
@@ -271,9 +278,11 @@ export default class IslandKeeper {
     const watcher = this.consul.watch({
       method: this.consul.kv.get,
       options: {
+        // FIXME @types/consul의 Watch.Options에는 key가 없나본데 어디 문젠지 확인
+        // @kson //2016-11-14
         key: endpointPrefix,
         recurse: true
-      }
+      } as Consul.CommonOptions //< 이거
     });
 
     const changeHandler = (data, response) => {
