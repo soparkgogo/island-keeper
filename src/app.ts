@@ -99,7 +99,8 @@ export default class IslandKeeper {
       let check: any = await this.consul.kv.get({ key });
 
       if (!check || !check.Session) {    // To Create a new session
-        sid = (await this.consul.session.create({ name: key, ttl: options.ttl.toString() + 's', behavior: "delete" }) as any).ID;
+        const session: any = await this.consul.session.create({ name: key, ttl: options.ttl.toString() + 's', behavior: "delete" });
+        sid = session.ID;
       }
       else {    // To Update an old session
         sid = check.Session;
