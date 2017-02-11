@@ -4,6 +4,9 @@ import * as _ from 'lodash';
 import * as url from 'url';
 import * as Consul from 'consul';
 
+import { testURIs } from './util';
+import { logger } from './logger';
+
 const ENDPOINT_PREFIX = 'endpoints/';
 const RPC_PREFIX = 'rpcs/';
 
@@ -26,14 +29,22 @@ function catchThrow(fn) {
   };
 }
 
+interface EndpointInfo {
+  name: string;
+  opts: { island: string };
+}
+
 export default class IslandKeeper {
   private static instance: IslandKeeper;
   private static serviceName: string;
+  private static willCheckEndpoint: boolean = process.env.ISLAND_KEEPER_ENDPOINT_CHECK === 'true';
 
   private ns: string;
   private consul: Consul.Consul;
   private _initialized: boolean = false;
   private intervalIds: { [name: string]: any } = {};
+  private endpoints: any = {};
+  private promiseEndpoints: Promise<any>;
 
   public get initialized() { return this._initialized; }
 
@@ -51,6 +62,10 @@ export default class IslandKeeper {
     return IslandKeeper.instance;
   }
 
+  public static enableEndpointCheck(value: boolean) {
+    IslandKeeper.willCheckEndpoint = value;
+  }
+
   private generateLogAhead(msg, stack?: string[]) {
     return (o) => {
       return IslandKeeper.logAhead(msg, o, stack);
@@ -64,7 +79,17 @@ export default class IslandKeeper {
     this.consul = Consul({host, promisify: true, defaults});
     this._initialized = true;
     this.ns = ns;
-    return this;
+
+    this.promiseEndpoints = Promise.resolve()
+      .then(() => this.getEndpoints())
+      .catch((e: Error) => {
+        if (e.message === 'get Endpoints is empty') return {};
+        throw e;
+      })
+      .then(endpoints => {
+        this.endpoints = endpoints || {};
+        return this.endpoints;
+      });
   }
 
   public setServiceName(name: string) {
@@ -230,11 +255,26 @@ export default class IslandKeeper {
       }));
   }
 
-  public registerEndpoint(name: string, value: any) {
-    value.island = IslandKeeper.serviceName;
-    return this.setKey(`/${this.ns}.${ENDPOINT_PREFIX}${name}`, value);
+  private async checkEndpointConflict(lhs: EndpointInfo) {
+    const endpoints = await this.promiseEndpoints;
+    _.forEach(endpoints, (v, k) => {
+      const rhs: EndpointInfo = { name: k, opts: v};
+
+      if (this.checkNoConflict(lhs, rhs)) return;
+      if (this.checkExactSameEndpointFromAnother(lhs, rhs)) return;
+      if (this.checkSameEndpointAtHere(lhs, rhs)) return;
+
+      throw new Error(`Different but equivalent endpoints are found. ${lhs.name} of ${lhs.opts.island} === ${rhs.name} of ${rhs.opts.island}`);
+    });
   }
 
+  public async registerEndpoint(endpointName: string, opts: any) {
+    opts.island = IslandKeeper.serviceName;
+    if (IslandKeeper.willCheckEndpoint) {
+      await this.checkEndpointConflict({ name: endpointName, opts });
+    }
+    return this.setKey(`/${this.ns}.${ENDPOINT_PREFIX}${endpointName}`, opts);
+  }
 
   public getRpcs(): Promise<{[key: string]: any}> {
     if (!this._initialized) return Promise.reject(new Error('Not initialized exception'));
@@ -287,7 +327,7 @@ export default class IslandKeeper {
     });
 
     const changeHandler = (data, response) => {
-      const consulIndex: number = +response.headers['x-consul-index'];
+      // const consulIndex: number = +response.headers['x-consul-index'];
       const changes = _.remove(data, (item) => {
         // FIXME: 가끔 놓쳐지는 endpoints들이 발견되었다. 그래서 지금은 안전하게 몽땅 다시 등록함. 딱히 성능 문제 없음.
         return true; // consulIndex == item['CreateIndex'] || consulIndex == item['ModifyIndex'];
@@ -350,5 +390,28 @@ export default class IslandKeeper {
     }
     req.write(stringPayload);
     req.end();
+  }
+
+  private checkExactSameEndpointFromAnother(lhs: EndpointInfo, rhs: EndpointInfo) {
+    if (lhs.name === rhs.name && lhs.opts.island !== rhs.opts.island) {
+      logger.warning(`An exact same endpoint is found at the ${rhs.opts.island}. Did you move the endpoint to here? - ${lhs.name}`);
+      return true;
+    }
+    return false;
+  }
+
+  private checkSameEndpointAtHere(lhs: EndpointInfo, rhs: EndpointInfo) {
+    if (!testURIs(lhs.name, rhs.name)) return false;
+    if (lhs.name === rhs.name) return false;
+    if (lhs.opts.island !== rhs.opts.island) return false;
+
+    logger.warning(`"${lhs.name}" and "${rhs.name}" are evaluated as same. Did you just renamed it? Be careful before deploy it.`);
+    return true;
+  }
+
+  private checkNoConflict(lhs: EndpointInfo, rhs: EndpointInfo) {
+    if (!testURIs(lhs.name, rhs.name)) return true;
+    if (lhs.name === rhs.name && lhs.opts.island === rhs.opts.island) return true;
+    return false;
   }
 }

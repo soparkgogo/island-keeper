@@ -1,6 +1,7 @@
 dist
 coverage
 island-keeper-*.tgz
+.vscode
 
 # Logs
 logs
