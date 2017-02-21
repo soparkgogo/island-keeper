@@ -1,6 +1,6 @@
 {
   "name": "island-keeper",
-  "version": "2.1.0-dev",
+  "version": "2.2.0-dev",
   "description": "island-keeper",
   "main": "dist/index.js",
   "typings": "dist/index.d.ts",
@@ -23,7 +23,7 @@
     "@types/node": "^6.0.46",
     "bluebird": "^3.4.6",
     "consul": "^0.25.0",
-    "island-loggers": "^1.0.2",
+    "island-loggers": "^1.1.0",
     "lodash": "^4.16.0",
     "source-map-support": "^0.4.2"
   },
