@@ -19,6 +19,13 @@ export interface Islands {
   }
 }
 
+export interface InitArgument {
+  host: string;
+  port?: string;
+  ns?: string;
+  token?: string;
+}
+
 // http://bluebirdjs.com/docs/api/catchthrow.html
 // 빨리 bluebird 3.0으로 갔으면... @kson //2016-08-08
 // 오히려 bluebird를 제거해버렸다. 크흑 @kson //2016-11-14
@@ -72,11 +79,16 @@ export default class IslandKeeper {
     };
   }
 
-  public init(host: string, ns: string = 'game', token?: string) {
+  public init({
+    host,
+    port,
+    ns = 'game',
+    token = process.env.ISLAND_CONSUL_TOKEN
+  }: InitArgument) {
     const defaults: {token?: string} = {
-      token: token || process.env.ISLAND_CONSUL_TOKEN
+      token
     };
-    this.consul = Consul({host, promisify: true, defaults});
+    this.consul = Consul({host, port, promisify: true, defaults});
     this._initialized = true;
     this.ns = ns;
 
