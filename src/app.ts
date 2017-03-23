@@ -280,6 +280,15 @@ export default class IslandKeeper {
     });
   }
 
+  private async switchQuota(endpointName: string, opts: any) {
+      return this.getKey(`/${this.ns}.${ENDPOINT_PREFIX}${endpointName}`).then(res => {
+           if (!res)
+               throw new Error('not found endpoint');
+           res.quota = opts;
+           return this.setKey(`/${this.ns}.${ENDPOINT_PREFIX}${endpointName}`, res);
+       });
+  }
+
   public async registerEndpoint(endpointName: string, opts: any) {
     opts.island = IslandKeeper.serviceName;
     if (IslandKeeper.willCheckEndpoint) {
