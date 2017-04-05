@@ -80,7 +80,7 @@ export default class IslandKeeper {
   }
 
   public init({
-    host,
+    host = 'consul',
     port,
     ns = 'game',
     token = process.env.ISLAND_CONSUL_TOKEN
