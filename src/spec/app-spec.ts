@@ -194,8 +194,7 @@ describe('etcd spec',() => {
   */
 
   it('초기화', done => {
-    IslandKeeper.getInst().init({host:process.env.CONSUL_HOST || '192.168.99.100',
-    port:process.env.CONSUL_PORT || 8400});
+    IslandKeeper.getInst().init({host: process.env.CONSUL_HOST || 'localhost', ns: process.env.CONSUL_NAMESPACE || 'game'});
     if (IslandKeeper.getInst().initialized) done();
   });
 
