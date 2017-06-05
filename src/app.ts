@@ -236,7 +236,7 @@ export default class IslandKeeper {
     }));
   }
 
-  public unregisterIsland(name: string) {
+public unregisterIsland(name: string, value: { hostname: string, port: any, pattern?: string, protocol?: string }) {
     return Promise.resolve(Bluebird.try(() => {
       if (!this.intervalIds[name]) throw new Error('Missing name');
 
@@ -244,9 +244,10 @@ export default class IslandKeeper {
       clearInterval(id);
       delete this.intervalIds[name];
 
+      const key = 's' + value.hostname.replace(/\./g, '') + value.port;
       return Promise.all([
-        this.delKey('/islands/hosts/' + name, { recursive: true }),
-        this.delKey('/islands/patterns/' + name, { recursive: true })
+        this.delKey(['islands', 'hosts', name, key].join('/'), { recursive: true }),
+        this.delKey(['islands', 'patterns', name].join('/'), { recursive: true })
       ]);
     }));
   }
