@@ -285,7 +285,7 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
       return this.getKey(`/${this.ns}.${ENDPOINT_PREFIX}${endpointName}`).then(res => {
            if (!res)
                throw new Error('not found endpoint');
-           let value = JSON.parse(res.Value);
+           const value = JSON.parse(res.Value);
            value.quota = opts;
            return this.setKey(`/${this.ns}.${ENDPOINT_PREFIX}${endpointName}`, value);
        });
