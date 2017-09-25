@@ -349,7 +349,7 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     });
 
     const changeHandler = (data, response) => {
-      logger.notice(`consul watch - changeHandler ${data.length} `);
+      logger.notice(`consul watch - changeHandler ${data.length}`);
       IslandKeeper.logAhead('IslandKeeper.watchEndpoints', {
         'Headers': response.headers,
         'Changes': data
