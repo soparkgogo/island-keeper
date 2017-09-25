@@ -342,26 +342,20 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     const watcher = this.consul.watch({
       method: this.consul.kv.get,
       options: {
-        // FIXME @types/consul의 Watch.Options에는 key가 없나본데 어디 문젠지 확인
-        // @kson //2016-11-14
         key: endpointPrefix,
         recurse: true
-      } as Consul.CommonOptions //< 이거
+      } as Consul.Kv.GetOptions
+      // Consul.Watch.Watchoptions 을 사용하는게 올바르나, interface에 recuse가 정의되어있지 않아 Kv.GetOptions으로 사용 by jipark, 2017.09.25
     });
 
     const changeHandler = (data, response) => {
-      // const consulIndex: number = +response.headers['x-consul-index'];
-      const changes = _.remove(data, (item) => {
-        // FIXME: 가끔 놓쳐지는 endpoints들이 발견되었다. 그래서 지금은 안전하게 몽땅 다시 등록함. 딱히 성능 문제 없음.
-        return true; // consulIndex == item['CreateIndex'] || consulIndex == item['ModifyIndex'];
-      });
-
+      logger.notice(`consul watch - changeHandler ${data.length} `);
       IslandKeeper.logAhead('IslandKeeper.watchEndpoints', {
         'Headers': response.headers,
         'Changes': data
       });
-      for (var i=0; i<changes.length; i++) {
-        const item = changes[i];
+      for (let i=0; i<data.length; i++) {
+        const item = data[i];
         const key = item['Key'].substring(endpointPrefix.length);
         const value = JSON.parse(item['Value']);
         handler(key, <T>value);
