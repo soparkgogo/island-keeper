@@ -356,7 +356,7 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
         'Headers': response.headers,
         'Changes': data
       });
-      for (var i=0; i<data.length; i++) {
+      for (let i=0; i<data.length; i++) {
         const item = data[i];
         const key = item['Key'].substring(endpointPrefix.length);
         const value = JSON.parse(item['Value']);
