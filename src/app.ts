@@ -45,7 +45,7 @@ export default class IslandKeeper {
   private static instance: IslandKeeper;
   private static serviceName: string;
   private static willCheckEndpoint: boolean = process.env.ISLAND_KEEPER_ENDPOINT_CHECK === 'true';
-  private static watcherErrorLimitCount: number = process.env.ISLAND_WATCH_LIMIT || 10;
+  private static watcherErrorLimitCount: number = parseInt(process.env.ISLAND_WATCH_LIMIT || 10, 10);
 
   private ns: string;
   private consul: Consul.Consul;
