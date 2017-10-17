@@ -350,6 +350,7 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     });
 
     const changeHandler = (data, response) => {
+      data = data || [];
       IslandKeeper.logAhead('IslandKeeper.watchEndpoints', {
         'Headers': response.headers,
         'Changes': data
