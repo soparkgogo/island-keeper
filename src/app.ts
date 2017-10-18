@@ -45,6 +45,7 @@ export default class IslandKeeper {
   private static instance: IslandKeeper;
   private static serviceName: string;
   private static willCheckEndpoint: boolean = process.env.ISLAND_KEEPER_ENDPOINT_CHECK === 'true';
+  private static watcherErrorLimitCount: number = parseInt(process.env.ISLAND_WATCH_LIMIT || 10, 10);
 
   private ns: string;
   private consul: Consul.Consul;
@@ -52,6 +53,7 @@ export default class IslandKeeper {
   private intervalIds: { [name: string]: any } = {};
   private endpoints: any = {};
   private promiseEndpoints: Promise<any>;
+  private watchErrorCount = 0;
 
   public get initialized() { return this._initialized; }
 
@@ -342,32 +344,36 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     const watcher = this.consul.watch({
       method: this.consul.kv.get,
       options: {
-        // FIXME @types/consul의 Watch.Options에는 key가 없나본데 어디 문젠지 확인
-        // @kson //2016-11-14
         key: endpointPrefix,
         recurse: true
-      } as Consul.CommonOptions //< 이거
+      } as Consul.Kv.GetOptions
     });
 
     const changeHandler = (data, response) => {
-      // const consulIndex: number = +response.headers['x-consul-index'];
-      const changes = _.remove(data, (item) => {
-        // FIXME: 가끔 놓쳐지는 endpoints들이 발견되었다. 그래서 지금은 안전하게 몽땅 다시 등록함. 딱히 성능 문제 없음.
-        return true; // consulIndex == item['CreateIndex'] || consulIndex == item['ModifyIndex'];
-      });
-
+      data = data || [];
       IslandKeeper.logAhead('IslandKeeper.watchEndpoints', {
         'Headers': response.headers,
         'Changes': data
       });
-      for (var i=0; i<changes.length; i++) {
-        const item = changes[i];
+      for (let i=0; i<data.length; i++) {
+        const item = data[i];
         const key = item['Key'].substring(endpointPrefix.length);
         const value = JSON.parse(item['Value']);
         handler(key, <T>value);
       }
+      this.watchErrorCount = 0;
     };
     watcher.on('change', changeHandler);
+    watcher.on('error', async err => {
+      try {
+        await watcher.end();
+      } catch(err1) {}
+
+      if (++this.watchErrorCount > IslandKeeper.watcherErrorLimitCount) {
+        throw err;
+      }
+      this.watchEndpoints(handler);
+    })
     return watcher;
   }
 
