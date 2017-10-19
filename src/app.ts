@@ -283,16 +283,19 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     });
   }
 
-  public async switchQuota(endpointName: string, opts: any) {
+  public async switchQuota(quotaType: string, endpointName: string, opts: any) {
       return this.getKey(`/${this.ns}.${ENDPOINT_PREFIX}${endpointName}`).then(res => {
            if (!res)
                throw new Error('not found endpoint');
            const value = JSON.parse(res.Value);
-           value.quota = opts;
+           value[quotaType] = value[quotaType] || {};
+           opts = opts || {};
+           _.map(_.keys(opts), optsKey => {
+             value[quotaType][optsKey] = opts[optsKey];
+           });
            return this.setKey(`/${this.ns}.${ENDPOINT_PREFIX}${endpointName}`, value);
        });
   }
-
   public async registerEndpoint(endpointName: string, opts: any) {
     opts.island = IslandKeeper.serviceName;
     if (IslandKeeper.willCheckEndpoint) {
