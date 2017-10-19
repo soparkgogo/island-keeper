@@ -1,6 +1,6 @@
 {
   "name": "island-keeper",
-  "version": "2.6.99-edge-lts.2",
+  "version": "2.6.99-edge-lts.3",
   "description": "island-keeper",
   "main": "dist/index.js",
   "typings": "dist/index.d.ts",
