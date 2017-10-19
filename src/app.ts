@@ -304,6 +304,7 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     opts.island = IslandKeeper.serviceName;
     opts.checksum = this.checksum(JSON.stringify(opts));
     return this.getKey(endpointKey).then(async res => {
+      res = res || {Value: {}};
       const prevChecksum = JSON.parse(res.Value).checksum;
       if (prevChecksum === opts.checksum) {
         return;
