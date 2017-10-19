@@ -3,6 +3,7 @@ import * as Bluebird from 'bluebird';
 import * as _ from 'lodash';
 import * as url from 'url';
 import * as Consul from 'consul';
+import * as Crypto from 'crypto';
 
 import { testURIs } from './util';
 import { logger } from './logger';
@@ -283,22 +284,35 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     });
   }
 
-  public async switchQuota(endpointName: string, opts: any) {
+  public async switchQuota(quotaType: string, endpointName: string, opts: any) {
       return this.getKey(`/${this.ns}.${ENDPOINT_PREFIX}${endpointName}`).then(res => {
            if (!res)
                throw new Error('not found endpoint');
            const value = JSON.parse(res.Value);
-           value.quota = opts;
+           value[quotaType] = value[quotaType] || {};
+           opts = opts || {};
+           _.map(_.keys(opts), optsKey => {
+             value[quotaType][optsKey] = opts[optsKey];
+           });
            return this.setKey(`/${this.ns}.${ENDPOINT_PREFIX}${endpointName}`, value);
        });
   }
 
   public async registerEndpoint(endpointName: string, opts: any) {
+    const endpointKey = `/${this.ns}.${ENDPOINT_PREFIX}${endpointName}`;
+    opts = opts || {};
     opts.island = IslandKeeper.serviceName;
-    if (IslandKeeper.willCheckEndpoint) {
-      await this.checkEndpointConflict({ name: endpointName, opts });
-    }
-    return this.setKey(`/${this.ns}.${ENDPOINT_PREFIX}${endpointName}`, opts);
+    opts.checksum = this.checksum(JSON.stringify(opts));
+    return this.getKey(endpointKey).then(async res => {
+      const prevChecksum = JSON.parse(res.Value).checksum;
+      if (prevChecksum === opts.checksum) {
+        return;
+      }
+      if (IslandKeeper.willCheckEndpoint) {
+        await this.checkEndpointConflict({ name: endpointName, opts });
+      }
+      return this.setKey(`/${this.ns}.${ENDPOINT_PREFIX}${endpointName}`, opts);
+    });
   }
 
   public getRpcs(): Promise<{[key: string]: any}> {
@@ -443,5 +457,9 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     if (!testURIs(lhs.name, rhs.name)) return true;
     if (lhs.name === rhs.name && lhs.opts.island === rhs.opts.island) return true;
     return false;
+  }
+
+  private checksum(str: string, algorithm?: string, encoding?: Crypto.HexBase64Latin1Encoding) {
+    return Crypto.createHash(algorithm || 'md5').update(str, 'utf8').digest(encoding || 'hex');
   }
 }
