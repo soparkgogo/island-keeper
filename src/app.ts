@@ -5,11 +5,13 @@ import * as url from 'url';
 import * as Consul from 'consul';
 import * as Crypto from 'crypto';
 
-import { testURIs } from './util';
+import { replaceUri } from './util';
 import { logger } from './logger';
 
 const ENDPOINT_PREFIX = 'endpoints/';
 const RPC_PREFIX = 'rpcs/';
+const CHECKSUM_PREFIX = 'checksum/';
+const WATCH_PREFIX = 'watch/';
 
 export interface Islands {
   patterns?: { [serviceName: string]: string };
@@ -53,7 +55,6 @@ export default class IslandKeeper {
   private _initialized: boolean = false;
   private intervalIds: { [name: string]: any } = {};
   private endpoints: any = {};
-  private promiseEndpoints: Promise<any>;
   private watchErrorCount = 0;
 
   public get initialized() { return this._initialized; }
@@ -76,12 +77,6 @@ export default class IslandKeeper {
     IslandKeeper.willCheckEndpoint = value;
   }
 
-  private generateLogAhead(msg, stack?: string[]) {
-    return (o) => {
-      return IslandKeeper.logAhead(msg, o, stack);
-    };
-  }
-
   public init({
     host = 'consul',
     port,
@@ -94,17 +89,6 @@ export default class IslandKeeper {
     this.consul = Consul({host, port, promisify: true, defaults});
     this._initialized = true;
     this.ns = ns;
-
-    this.promiseEndpoints = Promise.resolve()
-      .then(() => this.getEndpoints())
-      .catch((e: Error) => {
-        if (e.message === 'get Endpoints is empty') return {};
-        throw e;
-      })
-      .then(endpoints => {
-        this.endpoints = endpoints || {};
-        return this.endpoints;
-      });
   }
 
   public setServiceName(name: string) {
@@ -123,7 +107,7 @@ export default class IslandKeeper {
    * @param {any} value
    * @param {Object} options
    */
-  async setKey(key: string, value: any, options?: { ttl?: number, prevValue?: any, prevExist?: boolean, prevIndex?: number, maxRetries?: number }) {
+  async setKey(key: string, value: any, options?: { ttl?: number, prevValue?: any, prevExist?: boolean, prevIndex?: number, maxRetries?: number, cas?: string}) {
     if (!this._initialized) return Promise.reject(new Error('Not initialized exception'));
     if (typeof value !== 'string') value = JSON.stringify(value);
 
@@ -150,6 +134,10 @@ export default class IslandKeeper {
       input.acquire = sid;    // Leave sid property in the input parameter for ttl function.
     }
 
+    if (options && options.cas) {
+      input.cas = options.cas;
+    }
+
     return Promise.resolve(this.consul.kv.set(input));
   }
 
@@ -168,12 +156,7 @@ export default class IslandKeeper {
     }
     const recurse = options && options.recursive || false;
 
-    const logAhead = this.generateLogAhead('IslandKeeper.getKey');
-    return Promise.resolve(
-      Bluebird.resolve(this.consul.kv.get({key, recurse}))
-        .tap(logAhead)
-        .catch(catchThrow(logAhead))
-    );
+    return Promise.resolve(Bluebird.resolve(this.consul.kv.get({key, recurse})));
   }
 
   /**
@@ -193,9 +176,7 @@ export default class IslandKeeper {
     }
 
     const tmpError = new Error() as any;
-    const logAhead = this.generateLogAhead('IslandKeeper.delKey', tmpError.stack);
-    return Promise.resolve(this.consul.kv.del({key, recurse}))
-      .catch(catchThrow(logAhead));
+    return Promise.resolve(this.consul.kv.del({key, recurse}));
   }
 
 
@@ -204,7 +185,6 @@ export default class IslandKeeper {
     // GET /v2/service/info 에서 사용됨
     return Promise.resolve(
       Bluebird.resolve(this.getKey(`islands/hosts/${name}`, { recursive: true }))
-        .tap(this.generateLogAhead('IslandKeeper.getIsland'))
         .catch(err => {
           // not found
           if (err.errorCode === 100) return {};
@@ -259,29 +239,14 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     if (!this._initialized) return Promise.reject(new Error('Not initialized exception'));
 
     const key = `${this.ns}.${ENDPOINT_PREFIX}`;
-    const logAhead = this.generateLogAhead('IslandKeeper.getEndpoints');
     return Promise.resolve(Bluebird.resolve(this.getKey(key, { recursive: true }))
-      .tap(logAhead).catch(catchThrow(logAhead))
       .then((items) => {
-        if (!items) throw new Error('get Endpoints is empty');
+        if (!items) return {};
 
         return _.mapValues(
           _.keyBy(items, (item: any) => item.Key.slice(key.length)),
           (item: any) => JSON.parse(item.Value));
       }));
-  }
-
-  private async checkEndpointConflict(lhs: EndpointInfo) {
-    const endpoints = await this.promiseEndpoints;
-    _.forEach(endpoints, (v, k) => {
-      const rhs: EndpointInfo = { name: k, opts: v};
-
-      if (this.checkNoConflict(lhs, rhs)) return;
-      if (this.checkExactSameEndpointFromAnother(lhs, rhs)) return;
-      if (this.checkSameEndpointAtHere(lhs, rhs)) return;
-
-      throw new Error(`Different but equivalent endpoints are found. ${lhs.name} of ${lhs.opts.island} === ${rhs.name} of ${rhs.opts.island}`);
-    });
   }
 
   public async switchQuota(quotaType: string, endpointName: string, opts: any) {
@@ -298,30 +263,38 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
        });
   }
 
-  public async registerEndpoint(endpointName: string, opts: any) {
-    const endpointKey = `/${this.ns}.${ENDPOINT_PREFIX}${endpointName}`;
+  public registerEndpoint(endpointName: string, opts: any) {
     opts = opts || {};
     opts.island = IslandKeeper.serviceName;
-    opts.checksum = this.checksum(JSON.stringify(opts));
-    return this.getKey(endpointKey).then(async res => {
-      res = res || {Value: '{}'};
-      const prevChecksum = JSON.parse(res.Value).checksum;
-      if (prevChecksum === opts.checksum) {
-        return;
+    opts.checksum = this.checksum(opts);
+    this.endpoints[endpointName] = opts;
+  }
+
+  public async saveEndpoint() {
+    const islandCheckSum = this.checksum(this.endpoints || {});
+    const orgChecksum = await this.getEnpointChecksum();
+    const ModifyIndex = (orgChecksum.ModifyIndex || '').toString() || undefined;
+    if (orgChecksum.Value === islandCheckSum) {
+      return;
+    }
+    await this.checkEndpointConflict();
+    if (!await this.setIslandChecksum(this.getIslandChecksumKey(), islandCheckSum, ModifyIndex)) {
+      return;
+    }
+    await _.forEach(this.endpoints, async (opts, name) => {
+      if (opts.status === 'del') {
+        await this.delKey(`/${this.ns}.${ENDPOINT_PREFIX}${name}`, { recursive: true });
+      } else if (opts.status === 'update') {
+        await this.setKey(`/${this.ns}.${ENDPOINT_PREFIX}${name}`, _.omit(opts, ['status']));
       }
-      if (IslandKeeper.willCheckEndpoint) {
-        await this.checkEndpointConflict({ name: endpointName, opts });
-      }
-      return this.setKey(`/${this.ns}.${ENDPOINT_PREFIX}${endpointName}`, opts);
     });
+    this.setKey(this.getEndpointWatchKey(), +new Date());
   }
 
   public getRpcs(): Promise<{[key: string]: any}> {
     if (!this._initialized) return Promise.reject(new Error('Not initialized exception'));
     const key = `${this.ns}.${RPC_PREFIX}`;
-    const logAhead = this.generateLogAhead('IslandKeeper.getRpcs');
     return Promise.resolve(Bluebird.resolve(this.getKey(key, { recursive: true }))
-      .tap(logAhead).catch(catchThrow(logAhead))
       .then((items) => {
         if (!items) throw new Error('get Endpoints is empty');
 
@@ -347,15 +320,15 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
         }
       }
       rpcValue.island = currentIsland;
-      rpcValue.registered_at = new Date().getTime();
+      rpcValue.registered_at = +new Date();
       return this.setKey(`${this.ns}.${RPC_PREFIX}${name}`, rpcValue);
     });
   }
 
-  public watchEndpoints<T>(handler: (name: string, value: T) => void) {
+  public watchEndpoints<T>(handler: (endpoints: any) => void) {
     if (!this._initialized) throw new Error('Not initialized exception');
 
-    const endpointPrefix = this.ns + '.' + ENDPOINT_PREFIX;
+    const endpointPrefix = this.getEndpointWatchKey();
     const watcher = this.consul.watch({
       method: this.consul.kv.get,
       options: {
@@ -364,18 +337,13 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
       } as Consul.Kv.GetOptions
     });
 
-    const changeHandler = (data, response) => {
-      data = data || [];
-      IslandKeeper.logAhead('IslandKeeper.watchEndpoints', {
-        'Headers': response.headers,
-        'Changes': data
-      });
-      for (let i=0; i<data.length; i++) {
-        const item = data[i];
-        const key = item['Key'].substring(endpointPrefix.length);
-        const value = JSON.parse(item['Value']);
-        handler(key, <T>value);
+    const changeHandler = async (data, response) => {
+      data = data || '';
+      if (!data) {
+        this.setKey(endpointPrefix, +new Date());
+        return;
       }
+      handler(await this.getEndpoints());
       this.watchErrorCount = 0;
     };
     watcher.on('change', changeHandler);
@@ -392,74 +360,42 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     return watcher;
   }
 
-  /*
-   * 정신없을 때
-   *
-   * @params tag 태그
-   * @params message 로깅하고 싶은 any object
-   * @params stacks optional stacktrace. e.g. new Error().stack
-   */
-  public static logAhead(tag: string, message: any, stacks?: string[]): void {
-    const hostLogAhead = process.env['LOG_AHEAD'];
-    if (!hostLogAhead) return;
-
-    const http = require('http');
-    const util = require('util');
-
-    const payload = {
-      timestamp: new Date().getTime(),
-      islandName: IslandKeeper.serviceName,
-      stacks: stacks,
-      tag: tag,
-      message: message
-    };
-
-    const req = http.request({
-      method: 'POST',
-      hostname: hostLogAhead,
-      port: 9000,
-      path: '/log'
-    }, (res) => {
-    });
-    req.on('error', (err) => {
-      // Silently ignored
-      // console.log('Skip logging: ' + err);
-    });
-
-    var stringPayload: string;
-    try {
-      stringPayload = JSON.stringify(payload, null, 2);
-    } catch (e) { // TypeError: Converting circular structure to JSON
-      stringPayload = util.inspect(payload);
-    }
-    req.write(stringPayload);
-    req.end();
+  private getIslandChecksumKey() {
+    return `/${this.ns}.${CHECKSUM_PREFIX}${ENDPOINT_PREFIX}${IslandKeeper.serviceName}`;
   }
 
-  private checkExactSameEndpointFromAnother(lhs: EndpointInfo, rhs: EndpointInfo) {
-    if (lhs.name === rhs.name && lhs.opts.island !== rhs.opts.island) {
-      logger.warning(`An exact same endpoint is found at the ${rhs.opts.island}. Did you move the endpoint to here? - ${lhs.name}`);
-      return true;
-    }
-    return false;
+  private getEndpointWatchKey() {
+    return `/${this.ns}.${WATCH_PREFIX}ENDPOINT`;
   }
-
-  private checkSameEndpointAtHere(lhs: EndpointInfo, rhs: EndpointInfo) {
-    if (!testURIs(lhs.name, rhs.name)) return false;
-    if (lhs.name === rhs.name) return false;
-    if (lhs.opts.island !== rhs.opts.island) return false;
-
-    logger.warning(`"${lhs.name}" and "${rhs.name}" are evaluated as same. Did you just renamed it? Be careful before deploy it.`);
-    return true;
-  }
-
-  private checkNoConflict(lhs: EndpointInfo, rhs: EndpointInfo) {
-    if (!testURIs(lhs.name, rhs.name)) return true;
-    if (lhs.name === rhs.name && lhs.opts.island === rhs.opts.island) return true;
-    return false;
-  }
-
-  private checksum(str: string, algorithm?: string, encoding?: Crypto.HexBase64Latin1Encoding) {
+  private checksum(obj: any, algorithm?: string, encoding?: Crypto.HexBase64Latin1Encoding) {
+    const str = JSON.stringify(_(obj).toPairs().sortBy(0).fromPairs().value());
     return Crypto.createHash(algorithm || 'md5').update(str, 'utf8').digest(encoding || 'hex');
+  }
+
+  private getEnpointChecksum() {
+    return this.getKey(this.getIslandChecksumKey()).then(res => res || {});
+  }
+
+  private async setIslandChecksum(key: string, value: string, cas?: string): Promise<boolean> {
+    return !!(await this.setKey(key, value, {cas}));
+  }
+
+  private async checkEndpointConflict() {
+    const endpoints = await this.getEndpoints();
+    const endpointReplaceNames = _(this.endpoints).keys().map(name => [replaceUri(name)]).fromPairs().value();
+
+    _.forEach(endpoints, (opts, name) => {
+      if (opts['island'] === IslandKeeper.serviceName) {
+        if (!this.endpoints[name]) {
+          this.endpoints[name] = {'status': 'del'};
+        } else if (opts['checksum'] !== this.endpoints[name].checksum) {
+          this.endpoints[name].status = 'update';
+        }
+      } else {
+        if (endpointReplaceNames.hasOwnProperty(replaceUri(name))) {
+          throw new Error(`Different but equivalent endpoints are found. ${name} of ${opts['island']} === ${endpointReplaceNames[replaceUri(name)]}`);
+        }
+      }
+    })
   }
 }
