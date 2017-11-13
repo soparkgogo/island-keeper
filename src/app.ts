@@ -250,7 +250,7 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
   }
 
   public async switchQuota(quotaType: string, endpointName: string, opts: any) {
-      return this.getKey(`/${this.ns}.${ENDPOINT_PREFIX}${endpointName}`).then(res => {
+      return this.getKey(`${this.ns}.${ENDPOINT_PREFIX}${endpointName}`).then(res => {
            if (!res)
                throw new Error('not found endpoint');
            const value = JSON.parse(res.Value);
@@ -259,7 +259,7 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
            _.map(_.keys(opts), optsKey => {
              value[quotaType][optsKey] = opts[optsKey];
            });
-           return this.setKey(`/${this.ns}.${ENDPOINT_PREFIX}${endpointName}`, value);
+           return this.setKey(`${this.ns}.${ENDPOINT_PREFIX}${endpointName}`, value);
        });
   }
 
@@ -283,9 +283,9 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     }
     await _.forEach(this.endpoints, async (opts, name) => {
       if (opts.status === 'del') {
-        await this.delKey(`/${this.ns}.${ENDPOINT_PREFIX}${name}`, { recursive: true });
-      } else if (opts.status === 'update') {
-        await this.setKey(`/${this.ns}.${ENDPOINT_PREFIX}${name}`, _.omit(opts, ['status']));
+        await this.delKey(`${this.ns}.${ENDPOINT_PREFIX}${name}`, { recursive: true });
+      } else if (opts.status !== 'unchanged') {
+        await this.setKey(`${this.ns}.${ENDPOINT_PREFIX}${name}`, _.omit(opts, ['status']));
       }
     });
     this.setKey(this.getEndpointWatchKey(), +new Date());
@@ -361,11 +361,11 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
   }
 
   private getIslandChecksumKey() {
-    return `/${this.ns}.${CHECKSUM_PREFIX}${ENDPOINT_PREFIX}${IslandKeeper.serviceName}`;
+    return `${this.ns}.${CHECKSUM_PREFIX}${ENDPOINT_PREFIX}${IslandKeeper.serviceName}`;
   }
 
   private getEndpointWatchKey() {
-    return `/${this.ns}.${WATCH_PREFIX}ENDPOINT`;
+    return `${this.ns}.${WATCH_PREFIX}ENDPOINT`;
   }
   private checksum(obj: any, algorithm?: string, encoding?: Crypto.HexBase64Latin1Encoding) {
     const str = JSON.stringify(_(obj).toPairs().sortBy(0).fromPairs().value());
@@ -388,8 +388,8 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
       if (opts['island'] === IslandKeeper.serviceName) {
         if (!this.endpoints[name]) {
           this.endpoints[name] = {'status': 'del'};
-        } else if (opts['checksum'] !== this.endpoints[name].checksum) {
-          this.endpoints[name].status = 'update';
+        } else if (opts['checksum'] === this.endpoints[name].checksum) {
+          this.endpoints[name].status = 'unchanged';
         }
       } else {
         if (endpointReplaceNames.hasOwnProperty(replaceUri(name))) {
