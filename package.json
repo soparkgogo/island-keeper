@@ -1,6 +1,6 @@
 {
   "name": "island-keeper",
-  "version": "3.0.0-dev",
+  "version": "3.1.0-dev",
   "description": "island-keeper",
   "main": "dist/index.js",
   "typings": "dist/index.d.ts",
