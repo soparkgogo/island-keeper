@@ -11,6 +11,7 @@ import { logger } from './logger';
 const ENDPOINT_PREFIX = 'endpoints/';
 const RPC_PREFIX = 'rpcs/';
 const CHECKSUM_PREFIX = 'checksum/';
+const WATCH_PREFIX = 'watch/';
 
 export interface Islands {
   patterns?: { [serviceName: string]: string };
@@ -364,7 +365,7 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
   }
 
   private getEndpointWatchKey() {
-    return `${this.ns}.${CHECKSUM_PREFIX}${ENDPOINT_PREFIX}`;
+    return `${this.ns}.${WATCH_PREFIX}ENDPOINT`;
   }
   private checksum(obj: any, algorithm?: string, encoding?: Crypto.HexBase64Latin1Encoding) {
     const str = JSON.stringify(_(obj).toPairs().sortBy(0).fromPairs().value());
