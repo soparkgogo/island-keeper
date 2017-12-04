@@ -365,7 +365,7 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
   }
 
   private getEndpointWatchKey() {
-    return `${this.ns}.${WATCH_PREFIX}ENDPOINT`;
+    return `${this.ns}.${WATCH_PREFIX}endpoint`;
   }
   private checksum(obj: any, algorithm?: string, encoding?: Crypto.HexBase64Latin1Encoding) {
     const str = JSON.stringify(_(obj).toPairs().sortBy(0).fromPairs().value());
