@@ -86,6 +86,7 @@ export default class IslandKeeper {
     const defaults: {token?: string} = {
       token
     };
+    logger.info(`connection info: consul ${host}:${port}`);
     this.consul = Consul({host, port, promisify: true, defaults});
     this._initialized = true;
     this.ns = ns;
