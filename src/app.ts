@@ -369,7 +369,7 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     return `${this.ns}.${WATCH_PREFIX}endpoint`;
   }
   private checksum(obj: any, algorithm?: string, encoding?: Crypto.HexBase64Latin1Encoding) {
-    const str = JSON.stringify(_(obj).toPairs().sortBy(0).fromPairs().value());
+    const str = JSON.stringify((_(obj).toPairs().sortBy(0) as any).fromPairs().value());
     return Crypto.createHash(algorithm || 'md5').update(str, 'utf8').digest(encoding || 'hex');
   }
 

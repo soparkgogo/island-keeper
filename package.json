@@ -16,11 +16,11 @@
     "test": "gulp build && ISLAND_LOGGER_LEVEL=crit jasmine"
   },
   "dependencies": {
-    "@types/bluebird": "3.5.5",
+    "@types/bluebird": "3.5.20",
     "@types/consul": "^0.23.30",
     "@types/jasmine": "^2.5.37",
-    "@types/lodash": "4.14.56",
-    "@types/node": "^6.0.46",
+    "@types/lodash": "4.14.106",
+    "@types/node": "8.0.3",
     "bluebird": "^3.4.6",
     "consul": "^0.25.0",
     "island-loggers": "^1.1.0",
@@ -29,6 +29,7 @@
   },
   "devDependencies": {
     "gulp": "^3.9.1",
-    "std-mocks": "^1.0.1"
+    "std-mocks": "^1.0.1",
+    "typescript": "^2.8.1"
   }
 }
