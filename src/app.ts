@@ -361,8 +361,22 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     return watcher;
   }
 
+  public getIslands() {
+    if (!this._initialized) return Promise.reject(new Error('Not initialized exception'));
+    const key = this.getIslandChecksumGroup();
+    return Promise.resolve(Bluebird.resolve(this.getKey(key, { recursive: true }))
+      .then((items) => {
+        if (!items) return [];
+        return Object.keys(_.keyBy(items, (item) => item['Key'].slice(key.length)))
+      }));
+  }
+  
+  private getIslandChecksumGroup() {
+    return `${this.ns}.${CHECKSUM_PREFIX}${ENDPOINT_PREFIX}`;
+  }
+
   private getIslandChecksumKey() {
-    return `${this.ns}.${CHECKSUM_PREFIX}${ENDPOINT_PREFIX}${IslandKeeper.serviceName}`;
+    return `${this.getIslandChecksumGroup()}${IslandKeeper.serviceName}`;
   }
 
   private getEndpointWatchKey() {
