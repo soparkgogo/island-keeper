@@ -1,12 +1,12 @@
-import 'source-map-support/register'
 import * as Bluebird from 'bluebird';
-import * as _ from 'lodash';
-import * as url from 'url';
 import * as Consul from 'consul';
 import * as Crypto from 'crypto';
+import * as _ from 'lodash';
+import 'source-map-support/register';
+import * as url from 'url';
 
-import { replaceUri } from './util';
 import { logger } from './logger';
+import { replaceUri } from './util';
 
 const ENDPOINT_PREFIX = 'endpoints/';
 const RPC_PREFIX = 'rpcs/';
@@ -19,7 +19,7 @@ export interface Islands {
     [serviceName: string]: {
       [hostname: string]: string
     }
-  }
+  };
 }
 
 export interface InitArgument {
@@ -33,7 +33,7 @@ export interface InitArgument {
 // 빨리 bluebird 3.0으로 갔으면... @kson //2016-08-08
 // 오히려 bluebird를 제거해버렸다. 크흑 @kson //2016-11-14
 function catchThrow(fn) {
-  return (e) => {
+  return e => {
     fn(e);
     throw e;
   };
@@ -45,6 +45,17 @@ interface EndpointInfo {
 }
 
 export default class IslandKeeper {
+  public static getInst(): IslandKeeper {
+    if (!IslandKeeper.instance) {
+      IslandKeeper.instance = new IslandKeeper();
+    }
+    return IslandKeeper.instance;
+  }
+
+  public static enableEndpointCheck(value: boolean) {
+    IslandKeeper.willCheckEndpoint = value;
+  }
+
   private static instance: IslandKeeper;
   private static serviceName: string;
   private static willCheckEndpoint: boolean = process.env.ISLAND_KEEPER_ENDPOINT_CHECK === 'true';
@@ -56,7 +67,6 @@ export default class IslandKeeper {
   private intervalIds: { [name: string]: any } = {};
   private endpoints: any = {};
   private watchErrorCount = 0;
-
   public get initialized() { return this._initialized; }
 
   constructor() {
@@ -64,17 +74,6 @@ export default class IslandKeeper {
       throw new Error('Error: Instantiation failed: Use getInst() instead of new.');
     }
     IslandKeeper.instance = this;
-  }
-
-  public static getInst(): IslandKeeper {
-    if (!IslandKeeper.instance) {
-      IslandKeeper.instance = new IslandKeeper();
-    }
-    return IslandKeeper.instance;
-  }
-
-  public static enableEndpointCheck(value: boolean) {
-    IslandKeeper.willCheckEndpoint = value;
   }
 
   public init({
@@ -108,26 +107,33 @@ export default class IslandKeeper {
    * @param {any} value
    * @param {Object} options
    */
-  async setKey(key: string, value: any, options?: { ttl?: number, prevValue?: any, prevExist?: boolean, prevIndex?: number, maxRetries?: number, cas?: string}) {
+  async setKey(key: string,
+               value: any,
+               options?: { ttl?: number,
+                           prevValue?: any,
+                           prevExist?: boolean,
+                           prevIndex?: number,
+                           maxRetries?: number,
+                           cas?: string}) {
     if (!this._initialized) return Promise.reject(new Error('Not initialized exception'));
     if (typeof value !== 'string') value = JSON.stringify(value);
 
-    if (key && key.length > 1 && key[0] == '/') {
+    if (key && key.length > 1 && key[0] === '/') {
       key = key.slice(1);
     }
 
-    let input = { key, value } as any;
+    const input = { key, value } as any;
     let sid;
 
     // Need to create a new session when it needs ttl function.
     if (options && options.ttl) {
-      let check: any = await this.consul.kv.get({ key });
+      const check: any = await this.consul.kv.get({ key });
 
       if (!check || !check.Session) {    // To Create a new session
-        const session: any = await this.consul.session.create({ name: key, ttl: options.ttl.toString() + 's', behavior: "delete" });
+        const session: any = await this.consul.session.create({ name: key, ttl: options.ttl.toString() + 's',
+                                                                behavior: 'delete' });
         sid = session.ID;
-      }
-      else {    // To Update an old session
+      } else {    // To Update an old session
         sid = check.Session;
         this.consul.session.renew(sid);
       }
@@ -180,7 +186,6 @@ export default class IslandKeeper {
     return Promise.resolve(this.consul.kv.del({key, recurse}));
   }
 
-
   // 지금은 push-island 소재를 파악하는데에만 사용됨
   public getIsland(name: string): Promise<{[host: string]: string}> {
     // GET /v2/service/info 에서 사용됨
@@ -209,7 +214,7 @@ export default class IslandKeeper {
           this.setKey(['/islands', 'patterns', name].join('/'), value.pattern), { ttl: options.ttl || 10 }
         ]);
       });
-    }
+    };
 
     return Promise.resolve(
       Bluebird.try(() => {
@@ -224,7 +229,7 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     return Promise.resolve(Bluebird.try(() => {
       if (!this.intervalIds[name]) throw new Error('Missing name');
 
-      var id = this.intervalIds[name];
+      const id = this.intervalIds[name];
       clearInterval(id);
       delete this.intervalIds[name];
 
@@ -241,7 +246,7 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
 
     const key = `${this.ns}.${ENDPOINT_PREFIX}`;
     return Promise.resolve(Bluebird.resolve(this.getKey(key, { recursive: true }))
-      .then((items) => {
+      .then( items => {
         if (!items) return {};
 
         return _.mapValues(
@@ -296,7 +301,7 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     if (!this._initialized) return Promise.reject(new Error('Not initialized exception'));
     const key = `${this.ns}.${RPC_PREFIX}`;
     return Promise.resolve(Bluebird.resolve(this.getKey(key, { recursive: true }))
-      .then((items) => {
+      .then( items => {
         if (!items) throw new Error('get Endpoints is empty');
 
         return _.mapValues(
@@ -310,13 +315,14 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     const rpcValue = value || {};
 
     if (!currentIsland || currentIsland === undefined || currentIsland === 'undefined')
-      throw new Error("IslandKeeper will NOT register RPCs that doesn't provide its origin island. You should use IslandKeeper.setServiceName(string) at the very beginning");
+      throw new Error("IslandKeeper will NOT register RPCs that doesn't provide its origin island. " +
+                      "You should use IslandKeeper.setServiceName(string) at the very beginning");
 
     return this.getKey(`${this.ns}.${RPC_PREFIX}${name}`).then(res => {
       // Consul은 key not found 일 때, result가 undefined 임
       if (res) {
         const prevIsland = JSON.parse(res.Value).island;
-        if (prevIsland != currentIsland) {
+        if (prevIsland !== currentIsland) {
           throw new Error(`# RPC(${this.ns}.${name}) is already registered by ${prevIsland}-island.`);
         }
       }
@@ -351,13 +357,13 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     watcher.on('error', async err => {
       try {
         await watcher.end();
-      } catch(err1) {}
+      } catch (err1) {}
 
       if (++this.watchErrorCount > IslandKeeper.watcherErrorLimitCount) {
         throw err;
       }
       this.watchEndpoints(handler);
-    })
+    });
     return watcher;
   }
 
@@ -365,12 +371,12 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     if (!this._initialized) return Promise.reject(new Error('Not initialized exception'));
     const key = this.getIslandChecksumGroup();
     return Promise.resolve(Bluebird.resolve(this.getKey(key, { recursive: true }))
-      .then((items) => {
+      .then( items => {
         if (!items) return [];
-        return Object.keys(_.keyBy(items, (item) => item['Key'].slice(key.length)))
+        return Object.keys(_.keyBy(items, item => item.Key.slice(key.length)));
       }));
   }
-  
+
   private getIslandChecksumGroup() {
     return `${this.ns}.${CHECKSUM_PREFIX}${ENDPOINT_PREFIX}`;
   }
@@ -400,17 +406,18 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     const endpointReplaceNames = _(this.endpoints).keys().map(name => [replaceUri(name)]).fromPairs().value();
 
     _.forEach(endpoints, (opts, name) => {
-      if (opts['island'] === IslandKeeper.serviceName) {
+      if (opts.island === IslandKeeper.serviceName) {
         if (!this.endpoints[name]) {
-          this.endpoints[name] = {'status': 'del'};
-        } else if (opts['checksum'] === this.endpoints[name].checksum) {
+          this.endpoints[name] = {status: 'del'};
+        } else if (opts.checksum === this.endpoints[name].checksum) {
           this.endpoints[name].status = 'unchanged';
         }
       } else {
         if (endpointReplaceNames.hasOwnProperty(replaceUri(name))) {
-          throw new Error(`Different but equivalent endpoints are found. ${name} of ${opts['island']} === ${endpointReplaceNames[replaceUri(name)]}`);
+          throw new Error(`Different but equivalent endpoints are found. ` +
+                          `${name} of ${opts.island} === ${endpointReplaceNames[replaceUri(name)]}`);
         }
       }
-    })
+    });
   }
 }
