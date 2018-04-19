@@ -27,7 +27,7 @@
     "@types/consul": "^0.23.30",
     "@types/jasmine": "^2.5.37",
     "@types/lodash": "^4.14.106",
-    "@types/node": "^8.0.3",
+    "@types/node": "8.0.3",
     "gulp": "^3.9.1",
     "std-mocks": "^1.0.1",
     "typescript": "^2.8.1"
