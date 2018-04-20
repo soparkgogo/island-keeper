@@ -1,6 +1,7 @@
 'use strict';
 
 var gulp = require('gulp');
+var tslint = require('gulp-tslint');
 
 var sources = ['./src/**/*.ts'];
 
@@ -29,7 +30,19 @@ function clean(done) {
   del(['./dist', './node_modules'], done);
 }
 
-gulp.task('build',            compileTypescript);
+function doLint() {
+  if (process.env.npm_lifecycle_event === 'test') return;
+  return gulp.src('src/**/*.ts')
+    .pipe(tslint({
+      formatter: 'stylish'
+    }))
+    .pipe(tslint.report({
+      summarizeFailureOutput: true
+    }));
+}
+
+gulp.task('build',['tslint'], compileTypescript);
 gulp.task('buildIgnoreError', compileTypescriptIgnoreError);
 gulp.task('watch', watch);
 gulp.task('clean', clean);
+gulp.task('tslint', doLint);

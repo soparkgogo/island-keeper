@@ -1,19 +1,18 @@
 import * as _ from 'lodash';
+import * as stdMocks from 'std-mocks';
 
 import IslandKeeper from '../app';
 import { replaceUri } from '../util';
 
-const stdMocks = require('std-mocks');
-
 function spec(fn) {
-  return async (done) => {
+  return async done => {
     try {
       await fn();
       done();
     } catch (e) {
       done(e);
     }
-  }
+  };
 }
 
 describe('replaceUri', () => {
@@ -24,10 +23,11 @@ describe('replaceUri', () => {
 });
 
 // TODO : mock consul
-describe('islandkeeep with consul spec',() => {
+describe('islandkeeep with consul spec', () => {
   it('초기화', done => {
     IslandKeeper.getInst().setServiceName('testIsland');
-    IslandKeeper.getInst().init({host: process.env.CONSUL_HOST || 'localhost', ns: process.env.CONSUL_NAMESPACE || 'game'});
+    IslandKeeper.getInst().init( {host: process.env.CONSUL_HOST || 'localhost',
+                                  ns: process.env.CONSUL_NAMESPACE || 'game'} );
     if (IslandKeeper.getInst().initialized) done();
   });
 
@@ -41,7 +41,7 @@ describe('islandkeeep with consul spec',() => {
       done();
     }).catch(done);
     */
-  })
+  });
 
   /*
   it('간단한 키를 저장한다', done => {
@@ -165,7 +165,6 @@ describe('islandkeeep with consul spec',() => {
       IslandKeeper.getInst().unregisterIsland('bbbb');
     }, 2000);
   }, 10000);
-
 
   it('api 등록 테스트', done => {
     IslandKeeper.getInst().deleteEndpoints().then(() => {
