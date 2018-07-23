@@ -282,13 +282,13 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     if (!await this.setIslandChecksum(this.getIslandChecksumKey(), islandCheckSum, ModifyIndex)) {
       return;
     }
-    await _.forEach(this.endpoints, async (opts, name) => {
+    await Promise.all(_.map(this.endpoints, async (opts, name) => {
       if (opts.status === 'del') {
         await this.delKey(`${this.ns}.${ENDPOINT_PREFIX}${name}`, { recursive: true });
       } else if (opts.status !== 'unchanged') {
         await this.setKey(`${this.ns}.${ENDPOINT_PREFIX}${name}`, _.omit(opts, ['status']));
       }
-    });
+    }));
     this.setKey(this.getEndpointWatchKey(), +new Date());
   }
 
