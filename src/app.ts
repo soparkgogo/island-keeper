@@ -12,6 +12,9 @@ const ENDPOINT_PREFIX = 'endpoints/';
 const RPC_PREFIX = 'rpcs/';
 const CHECKSUM_PREFIX = 'checksum/';
 const WATCH_PREFIX = 'watch/';
+const STATUS_START = 'start';
+const STATUS_COMPLETE = 'complete';
+const STATUS_TOUCH = 'touch';
 
 export interface Islands {
   patterns?: { [serviceName: string]: string };
@@ -273,23 +276,31 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
 
   public async saveEndpoint() {
     const islandCheckSum = this.checksum(this.endpoints || {});
-    const orgChecksum = await this.getEnpointChecksum();
-    const ModifyIndex = (orgChecksum.ModifyIndex || '').toString() || undefined;
-    if (orgChecksum.Value === islandCheckSum) {
+    const startChecksum = await this.getEnpointChecksum(STATUS_START);
+    const endChecksum = await this.getEnpointChecksum(STATUS_COMPLETE);
+    const touchTs = await this.getEnpointChecksum(STATUS_TOUCH);
+    const ModifyIndex = (startChecksum.ModifyIndex || '').toString() || undefined;
+    if (startChecksum.Value === islandCheckSum && endChecksum.Value === islandCheckSum) return;
+    if (startChecksum.Value === islandCheckSum && +touchTs.Value > +new Date() - 10000) return;
+    if (!await this.setIslandChecksum(this.getIslandChecksumKey(STATUS_START), islandCheckSum, ModifyIndex))
       return;
-    }
     await this.checkEndpointConflict();
-    if (!await this.setIslandChecksum(this.getIslandChecksumKey(), islandCheckSum, ModifyIndex)) {
-      return;
-    }
-    await Promise.all(_.map(this.endpoints, async (opts, name) => {
+    const endpointNames = Object.keys(this.endpoints);
+    for (const name of endpointNames) {
+      if (!this.endpoints.hasOwnProperty(name)) continue;
+      const opts = this.endpoints[name];
+      const promises = [];
       if (opts.status === 'del') {
-        await this.delKey(`${this.ns}.${ENDPOINT_PREFIX}${name}`, { recursive: true });
+        promises.push(this.delKey(`${this.ns}.${ENDPOINT_PREFIX}${name}`, { recursive: true }));
       } else if (opts.status !== 'unchanged') {
-        await this.setKey(`${this.ns}.${ENDPOINT_PREFIX}${name}`, _.omit(opts, ['status']));
+        promises.push(this.setKey(`${this.ns}.${ENDPOINT_PREFIX}${name}`, _.omit(opts, ['status'])));
+      } else {
+        continue;
       }
-    }));
-    this.setKey(this.getEndpointWatchKey(), +new Date());
+      promises.push(this.setKey(this.getIslandChecksumKey(STATUS_TOUCH), +new Date()));
+      await Promise.all(promises);
+    }
+    await this.setKey(this.getIslandChecksumKey(STATUS_COMPLETE), islandCheckSum);
   }
 
   public getRpcs(): Promise<{[key: string]: any}> {
@@ -361,8 +372,8 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     return watcher;
   }
 
-  private getIslandChecksumKey() {
-    return `${this.ns}.${CHECKSUM_PREFIX}${ENDPOINT_PREFIX}${IslandKeeper.serviceName}`;
+  private getIslandChecksumKey(status: string) {
+    return `${this.ns}.${CHECKSUM_PREFIX}${ENDPOINT_PREFIX}${IslandKeeper.serviceName}-${status}`;
   }
 
   private getEndpointWatchKey() {
@@ -373,8 +384,8 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     return Crypto.createHash(algorithm || 'md5').update(str, 'utf8').digest(encoding || 'hex');
   }
 
-  private getEnpointChecksum() {
-    return this.getKey(this.getIslandChecksumKey()).then(res => res || {});
+  private getEnpointChecksum(status: string) {
+    return this.getKey(this.getIslandChecksumKey(status)).then(res => res || {});
   }
 
   private async setIslandChecksum(key: string, value: string, cas?: string): Promise<boolean> {
