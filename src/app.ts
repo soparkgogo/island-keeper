@@ -12,6 +12,9 @@ const ENDPOINT_PREFIX = 'endpoints/';
 const RPC_PREFIX = 'rpcs/';
 const CHECKSUM_PREFIX = 'checksum/';
 const WATCH_PREFIX = 'watch/';
+const STATUS_START = 'start';
+const STATUS_COMPLETE = 'complete';
+const STATUS_TOUCH = 'touch';
 
 export interface Islands {
   patterns?: { [serviceName: string]: string };
@@ -27,21 +30,6 @@ export interface InitArgument {
   port?: string;
   ns?: string;
   token?: string;
-}
-
-// http://bluebirdjs.com/docs/api/catchthrow.html
-// 빨리 bluebird 3.0으로 갔으면... @kson //2016-08-08
-// 오히려 bluebird를 제거해버렸다. 크흑 @kson //2016-11-14
-function catchThrow(fn) {
-  return e => {
-    fn(e);
-    throw e;
-  };
-}
-
-interface EndpointInfo {
-  name: string;
-  opts: { island: string };
 }
 
 export default class IslandKeeper {
@@ -179,10 +167,8 @@ export default class IslandKeeper {
     // destroy the key with TTL function
     const result: any = await this.consul.kv.get({key, recurse});
     if (result && result.Session) {
-      return await this.consul.session.destroy(result.Session);
+      return this.consul.session.destroy(result.Session);
     }
-
-    const tmpError = new Error() as any;
     return Promise.resolve(this.consul.kv.del({key, recurse}));
   }
 
@@ -278,23 +264,34 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
 
   public async saveEndpoint() {
     const islandCheckSum = this.checksum(this.endpoints || {});
-    const orgChecksum = await this.getEnpointChecksum();
-    const ModifyIndex = (orgChecksum.ModifyIndex || '').toString() || undefined;
-    if (orgChecksum.Value === islandCheckSum) {
+    const startChecksum = await this.getEnpointChecksum(STATUS_START);
+    const endChecksum = await this.getEnpointChecksum(STATUS_COMPLETE);
+    const touchTs = await this.getEnpointChecksum(STATUS_TOUCH);
+    const ModifyIndex = (startChecksum.ModifyIndex || '').toString() || undefined;
+    // 시작과 끝의 checksum이 갖다는 것은 모두 완료되었다고 보증할 수 있다.
+    if (startChecksum.Value === islandCheckSum && endChecksum.Value === islandCheckSum) return;
+    // 마지막 touch한 시점에서 10s가 지났으면 처리 도중 장애가 생겼다고 보고 진입한다.
+    if (startChecksum.Value === islandCheckSum && +touchTs.Value > +new Date() - 10000) return;
+    // cas로 인하여 누군가 먼저 진입했다면 여기에서 되돌아 갈것이다.
+    if (!await this.setIslandChecksum(this.getIslandChecksumKey(STATUS_START), islandCheckSum, ModifyIndex))
       return;
-    }
     await this.checkEndpointConflict();
-    if (!await this.setIslandChecksum(this.getIslandChecksumKey(), islandCheckSum, ModifyIndex)) {
-      return;
-    }
-    await Promise.all(_.map(this.endpoints, async (opts, name) => {
+    const endpointNames = Object.keys(this.endpoints);
+    for (const name of endpointNames) {
+      if (!this.endpoints.hasOwnProperty(name)) continue;
+      const opts = this.endpoints[name];
+      const promises = [];
       if (opts.status === 'del') {
-        await this.delKey(`${this.ns}.${ENDPOINT_PREFIX}${name}`, { recursive: true });
+        promises.push(this.delKey(`${this.ns}.${ENDPOINT_PREFIX}${name}`, { recursive: true }));
       } else if (opts.status !== 'unchanged') {
-        await this.setKey(`${this.ns}.${ENDPOINT_PREFIX}${name}`, _.omit(opts, ['status']));
+        promises.push(this.setKey(`${this.ns}.${ENDPOINT_PREFIX}${name}`, _.omit(opts, ['status'])));
+      } else {
+        continue;
       }
-    }));
-    this.setKey(this.getEndpointWatchKey(), +new Date());
+      promises.push(this.setKey(this.getIslandChecksumKey(STATUS_TOUCH), +new Date()));
+      await Promise.all(promises);
+    }
+    await this.setKey(this.getIslandChecksumKey(STATUS_COMPLETE), islandCheckSum);
   }
 
   public getRpcs(): Promise<{[key: string]: any}> {
@@ -381,8 +378,8 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     return `${this.ns}.${CHECKSUM_PREFIX}${ENDPOINT_PREFIX}`;
   }
 
-  private getIslandChecksumKey() {
-    return `${this.getIslandChecksumGroup()}${IslandKeeper.serviceName}`;
+  private getIslandChecksumKey(status: string) {
+    return `${this.getIslandChecksumGroup()}${IslandKeeper.serviceName}-${status}`;
   }
 
   private getEndpointWatchKey() {
@@ -393,8 +390,8 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
     return Crypto.createHash(algorithm || 'md5').update(str, 'utf8').digest(encoding || 'hex');
   }
 
-  private getEnpointChecksum() {
-    return this.getKey(this.getIslandChecksumKey()).then(res => res || {});
+  private getEnpointChecksum(status: string) {
+    return this.getKey(this.getIslandChecksumKey(status)).then(res => res || {});
   }
 
   private async setIslandChecksum(key: string, value: string, cas?: string): Promise<boolean> {
