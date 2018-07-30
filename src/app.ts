@@ -292,6 +292,7 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
       await Promise.all(promises);
     }
     await this.setKey(this.getIslandChecksumKey(STATUS_COMPLETE), islandCheckSum);
+    await this.setKey(this.getEndpointWatchKey(), +new Date());
   }
 
   public getRpcs(): Promise<{[key: string]: any}> {
