@@ -1,6 +1,6 @@
 {
   "name": "island-keeper",
-  "version": "3.6.0-rc.1",
+  "version": "3.6.0",
   "description": "island-keeper",
   "main": "dist/index.js",
   "typings": "dist/index.d.ts",
@@ -19,7 +19,7 @@
   "dependencies": {
     "bluebird": "^3.4.6",
     "consul": "^0.25.0",
-    "island-loggers": "rc",
+    "island-loggers": "^1.2.0",
     "lodash": "^4.16.0",
     "source-map-support": "^0.4.2",
     "winston": "^2.4.1"
