@@ -264,16 +264,17 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
 
   public async saveEndpoint() {
     const islandCheckSum = this.checksum(this.endpoints || {});
-    const startChecksum = await this.getEnpointChecksum(STATUS_START);
+    const startChecksum = await this.getStartChecksum();
     const endChecksum = await this.getEnpointChecksum(STATUS_COMPLETE);
     const touchTs = await this.getEnpointChecksum(STATUS_TOUCH);
-    const ModifyIndex = (startChecksum.ModifyIndex || '').toString() || undefined;
     // 시작과 끝의 checksum이 갖다는 것은 모두 완료되었다고 보증할 수 있다.
     if (startChecksum.Value === islandCheckSum && endChecksum.Value === islandCheckSum) return;
     // 마지막 touch한 시점에서 10s가 지났으면 처리 도중 장애가 생겼다고 보고 진입한다.
     if (startChecksum.Value === islandCheckSum && +touchTs.Value > +new Date() - 10000) return;
     // cas로 인하여 누군가 먼저 진입했다면 여기에서 되돌아 갈것이다.
-    if (!await this.setIslandChecksum(this.getIslandChecksumKey(STATUS_START), islandCheckSum, ModifyIndex))
+    if (!await this.setIslandChecksum(this.getIslandChecksumKey(STATUS_START),
+                                      islandCheckSum,
+                                      startChecksum.ModifyIndex))
       return;
     await this.checkEndpointConflict();
     const endpointNames = Object.keys(this.endpoints);
@@ -417,5 +418,13 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
         }
       }
     });
+  }
+
+  private async getStartChecksum() {
+    const startChecksum = await this.getEnpointChecksum(STATUS_START);
+    if (startChecksum.ModifyIndex) return startChecksum;
+    await this.setIslandChecksum(this.getIslandChecksumKey(STATUS_START), 'init');
+    await Bluebird.delay(500);
+    return this.getStartChecksum();
   }
 }
