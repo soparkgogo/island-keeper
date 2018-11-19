@@ -359,8 +359,9 @@ public unregisterIsland(name: string, value: { hostname: string, port: any, patt
       } catch (err1) {}
 
       if (++this.watchErrorCount > IslandKeeper.watcherErrorLimitCount) {
-        throw err;
+        logger.crit(`no longer possible to use watcher. please checking consul connection or restart island service`);
       }
+      await Bluebird.delay(500);
       this.watchEndpoints(handler);
     });
     return watcher;
